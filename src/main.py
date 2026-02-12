@@ -78,6 +78,43 @@ async def _proxy(payload: Dict[str, Any], stream: bool, transform: str, request:
         return JSONResponse(content=to_completions(body))
 
 
+async def _proxy_passthrough(payload: Dict[str, Any], stream: bool, request: Request) -> Any:
+    upstream_url = settings.upstream_base_url.rstrip("/") + settings.upstream_responses_path
+    headers = _build_upstream_headers(request)
+
+    timeout = httpx.Timeout(settings.request_timeout)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        start = time.time()
+        try:
+            if stream:
+                response = await client.post(upstream_url, json=payload, headers=headers, stream=True)
+            else:
+                response = await client.post(upstream_url, json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            logger.error("upstream.request_error", error=str(exc))
+            return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.info(
+            "upstream.response",
+            status=response.status_code,
+            elapsed_ms=elapsed_ms,
+        )
+
+        if stream:
+            if response.status_code >= 400:
+                data = await response.aread()
+                return JSONResponse(status_code=response.status_code, content={"error": data.decode("utf-8", "ignore")})
+
+            return StreamingResponse(response.aiter_bytes(), media_type="text/event-stream")
+
+        if response.status_code >= 400:
+            return JSONResponse(status_code=response.status_code, content={"error": response.text})
+
+        return JSONResponse(content=response.json())
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Any:
     payload = await request.json()
@@ -92,3 +129,9 @@ async def completions(request: Request) -> Any:
     model_map = settings.resolved_model_map()
     responses_payload = build_responses_request(payload, model_map)
     return await _proxy(responses_payload, bool(payload.get("stream")), "completions", request)
+
+
+@app.post("/v1/responses")
+async def responses(request: Request) -> Any:
+    payload = await request.json()
+    return await _proxy_passthrough(payload, bool(payload.get("stream")), request)

@@ -71,6 +71,7 @@ curl http://localhost:8000/healthz
 ## 兼容性 | Compatibility
 
 - 兼容旧版 OpenAI SDK 的 `/v1/chat/completions` 与 `/v1/completions`
+- 新接口 `/v1/responses` 直接透传到上游
 - 支持流式输出 (SSE)
 - 支持常见上游 2xx/3xx/401/403/405 响应的健康验证
 
