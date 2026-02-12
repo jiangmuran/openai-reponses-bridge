@@ -14,7 +14,18 @@ Lightweight reverse proxy that adapts legacy `/v1/chat/completions` and `/v1/com
 
 ## 快速开始 | Quick Start
 
-> 以下一行命令会提示输入上游地址，并依次校验：`URL`、`URL/responses`、`URL/v1/responses`，全部通过才会启动。
+> 先下载项目，然后执行一行命令。以下命令会提示输入上游地址，并依次校验：`URL`、`URL/responses`、`URL/v1/responses`，全部通过才会启动。
+
+### 方式一：下载 ZIP | Download ZIP
+
+- GitHub 页面点击 Download ZIP，解压后进入目录
+
+### 方式二：克隆 | Clone
+
+```bash
+git clone git@github.com:jiangmuran/openai-reponses-bridge.git
+cd openai-reponses-bridge
+```
 
 ### macOS / Linux
 
@@ -51,6 +62,7 @@ curl http://localhost:8000/healthz
 - `UPSTREAM_BASE_URL`: 上游 API 基础地址
 - `UPSTREAM_API_KEY`: 上游密钥
 - `UPSTREAM_API_KEY_HEADER`: 认证头（默认 `Authorization`）
+- `PASS_THROUGH_AUTH`: 未设置上游 key 时是否透传下游认证头（默认 true）
 - `UPSTREAM_RESPONSES_PATH`: Responses 路径（默认 `/v1/responses`）
 - `REQUEST_TIMEOUT`: 请求超时秒数
 - `LOG_LEVEL`: 日志级别
@@ -80,3 +92,6 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-3.5-turbo","messages":[{"role":"user","content":"Hello"}]}'
 ```
+## 鉴权透传 | Auth Pass-through
+
+如果没有设置 `UPSTREAM_API_KEY`，服务会默认把下游请求中的认证头（默认 `Authorization`）透传到上游。

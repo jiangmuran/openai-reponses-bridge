@@ -23,10 +23,21 @@ async def healthz() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-async def _proxy(payload: Dict[str, Any], stream: bool, transform: str) -> Any:
-    upstream_url = settings.upstream_base_url.rstrip("/") + settings.upstream_responses_path
+def _build_upstream_headers(request: Request) -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
     headers.update(settings.auth_headers())
+
+    if not settings.upstream_api_key and settings.pass_through_auth:
+        incoming = request.headers.get(settings.upstream_api_key_header)
+        if incoming:
+            headers[settings.upstream_api_key_header] = incoming
+
+    return headers
+
+
+async def _proxy(payload: Dict[str, Any], stream: bool, transform: str, request: Request) -> Any:
+    upstream_url = settings.upstream_base_url.rstrip("/") + settings.upstream_responses_path
+    headers = _build_upstream_headers(request)
 
     timeout = httpx.Timeout(settings.request_timeout)
 
@@ -72,7 +83,7 @@ async def chat_completions(request: Request) -> Any:
     payload = await request.json()
     model_map = settings.resolved_model_map()
     responses_payload = build_responses_request(payload, model_map)
-    return await _proxy(responses_payload, bool(payload.get("stream")), "chat")
+    return await _proxy(responses_payload, bool(payload.get("stream")), "chat", request)
 
 
 @app.post("/v1/completions")
@@ -80,4 +91,4 @@ async def completions(request: Request) -> Any:
     payload = await request.json()
     model_map = settings.resolved_model_map()
     responses_payload = build_responses_request(payload, model_map)
-    return await _proxy(responses_payload, bool(payload.get("stream")), "completions")
+    return await _proxy(responses_payload, bool(payload.get("stream")), "completions", request)

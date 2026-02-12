@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     upstream_responses_path: str = Field(default="/v1/responses")
     upstream_api_key: str = Field(default="")
     upstream_api_key_header: str = Field(default="Authorization")
+    pass_through_auth: bool = Field(default=True)
     request_timeout: float = Field(default=30.0)
     log_level: str = Field(default="INFO")
     model_map: str = Field(default="{}")
