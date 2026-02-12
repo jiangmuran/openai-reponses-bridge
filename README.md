@@ -11,6 +11,8 @@ Lightweight reverse proxy that adapts legacy `/v1/chat/completions` and `/v1/com
 - 可扩展配置：模型映射、超时、日志级别、上游路径可配置
 - 稳健转发：超时控制、错误统一返回、结构化日志
 - 支持流式与非流式响应
+- 新接口 `/v1/responses` 直接透传到上游
+- 默认从下游透传认证头，无需额外配置
 
 ## 快速开始 | Quick Start
 
@@ -55,6 +57,15 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Upstream https://api
 curl http://localhost:8000/healthz
 ```
 
+## 工作原理 | How It Works
+
+1. 客户端仍然调用旧接口 `/v1/chat/completions` 或 `/v1/completions`
+2. 服务将请求映射为 Responses API 结构
+3. 请求转发到上游 `/v1/responses`
+4. 返回结果转换为旧结构或流式 chunk
+
+当客户端直接调用 `/v1/responses` 时，服务将请求与响应直接透传，不做结构改写。
+
 ## 配置 | Configuration
 
 复制 `.env.example` 为 `.env` 并修改：
@@ -67,6 +78,13 @@ curl http://localhost:8000/healthz
 - `REQUEST_TIMEOUT`: 请求超时秒数
 - `LOG_LEVEL`: 日志级别
 - `MODEL_MAP`: 模型映射 JSON（旧模型 -> 新模型）
+
+## 接口 | Endpoints
+
+- `POST /v1/chat/completions`：旧版 Chat Completions 适配
+- `POST /v1/completions`：旧版 Completions 适配
+- `POST /v1/responses`：新接口透传
+- `GET /healthz`：健康检查
 
 ## 兼容性 | Compatibility
 
@@ -93,6 +111,26 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-3.5-turbo","messages":[{"role":"user","content":"Hello"}]}'
 ```
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model":"gpt-4.1-mini","input":"Hello"}'
+```
 ## 鉴权透传 | Auth Pass-through
 
 如果没有设置 `UPSTREAM_API_KEY`，服务会默认把下游请求中的认证头（默认 `Authorization`）透传到上游。
+如果你的上游使用不同的认证头（如 `api-key`），请设置 `UPSTREAM_API_KEY_HEADER`。
+
+## 故障排查 | Troubleshooting
+
+- 启动前校验失败：检查上游地址是否正确，是否需要代理或 VPN
+- 返回 401/403：确认下游请求是否携带有效密钥，或在 `.env` 中设置 `UPSTREAM_API_KEY`
+- 流式中断：检查上游是否支持 SSE，并确认网络稳定
+
+## 运行测试 | Tests
+
+```bash
+.venv/bin/pytest
+```
