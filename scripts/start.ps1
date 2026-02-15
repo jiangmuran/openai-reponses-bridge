@@ -22,11 +22,20 @@ if (-not $Upstream) {
 }
 
 $Upstream = $Upstream.TrimEnd("/")
+$UpstreamHasV1 = $false
+if ($Upstream.EndsWith("/v1")) {
+  $UpstreamHasV1 = $true
+}
 
-$allowed = @(200,201,204,301,302,303,307,308,401,403,405)
+$allowedGet = @(200,201,204,301,302,303,307,308,401,403,405,429)
+$allowedPost = @(200,201,204,301,302,303,307,308,400,401,403,405,415,422,429)
 
 function Test-Endpoint {
-  param([string]$Url)
+  param(
+    [string]$Url,
+    [string]$Method = "Get",
+    [int[]]$Allowed = $allowedGet
+  )
 
   $headers = @{}
   if ($ApiKey) {
@@ -34,7 +43,12 @@ function Test-Endpoint {
   }
 
   try {
-    $response = Invoke-WebRequest -Uri $Url -Method Get -Headers $headers -TimeoutSec 10
+    if ($Method -eq "Post") {
+      $response = Invoke-WebRequest -Uri $Url -Method $Method -Headers $headers -Body "{}" `
+        -ContentType "application/json" -TimeoutSec 10
+    } else {
+      $response = Invoke-WebRequest -Uri $Url -Method $Method -Headers $headers -TimeoutSec 10
+    }
     $status = [int]$response.StatusCode
   } catch {
     if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
@@ -45,7 +59,7 @@ function Test-Endpoint {
     }
   }
 
-  if ($allowed -contains $status) {
+  if ($Allowed -contains $status) {
     Write-Output "OK: $Url ($status)"
     return $true
   }
@@ -55,9 +69,11 @@ function Test-Endpoint {
 }
 
 Write-Output "Validating upstream..."
-if (-not (Test-Endpoint "$Upstream")) { exit 1 }
-if (-not (Test-Endpoint "$Upstream/responses")) { exit 1 }
-if (-not (Test-Endpoint "$Upstream/v1/responses")) { exit 1 }
+if (-not (Test-Endpoint "$Upstream" -Method Get -Allowed $allowedGet)) { exit 1 }
+if (-not (Test-Endpoint "$Upstream/responses" -Method Post -Allowed $allowedPost)) { exit 1 }
+if (-not $UpstreamHasV1) {
+  if (-not (Test-Endpoint "$Upstream/v1/responses" -Method Post -Allowed $allowedPost)) { exit 1 }
+}
 
 $env:UPSTREAM_BASE_URL = $Upstream
 if ($ApiKey) {
