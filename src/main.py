@@ -36,19 +36,19 @@ def _build_upstream_headers(request: Request) -> Dict[str, str]:
 
 
 async def _proxy(payload: Dict[str, Any], stream: bool, transform: str, request: Request) -> Any:
-    upstream_url = settings.upstream_base_url.rstrip("/") + settings.upstream_responses_path
+    upstream_url = settings.upstream_responses_url()
     headers = _build_upstream_headers(request)
 
     timeout = httpx.Timeout(settings.request_timeout)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    if stream:
+        client = httpx.AsyncClient(timeout=timeout)
         start = time.time()
         try:
-            if stream:
-                response = await client.post(upstream_url, json=payload, headers=headers, stream=True)
-            else:
-                response = await client.post(upstream_url, json=payload, headers=headers)
+            req = client.build_request("POST", upstream_url, json=payload, headers=headers)
+            response = await client.send(req, stream=True)
         except httpx.RequestError as exc:
+            await client.aclose()
             logger.error("upstream.request_error", error=str(exc))
             return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
 
@@ -59,15 +59,38 @@ async def _proxy(payload: Dict[str, Any], stream: bool, transform: str, request:
             elapsed_ms=elapsed_ms,
         )
 
-        if stream:
-            if response.status_code >= 400:
-                data = await response.aread()
-                return JSONResponse(status_code=response.status_code, content={"error": data.decode("utf-8", "ignore")})
+        if response.status_code >= 400:
+            data = await response.aread()
+            await response.aclose()
+            await client.aclose()
+            return JSONResponse(status_code=response.status_code, content={"error": data.decode("utf-8", "ignore")})
 
-            lines = response.aiter_lines()
-            if transform == "chat":
-                return StreamingResponse(stream_chat_completions(lines), media_type="text/event-stream")
-            return StreamingResponse(stream_completions(lines), media_type="text/event-stream")
+        async def stream_lines() -> Any:
+            try:
+                async for line in response.aiter_lines():
+                    yield line
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        if transform == "chat":
+            return StreamingResponse(stream_chat_completions(stream_lines()), media_type="text/event-stream")
+        return StreamingResponse(stream_completions(stream_lines()), media_type="text/event-stream")
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        start = time.time()
+        try:
+            response = await client.post(upstream_url, json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            logger.error("upstream.request_error", error=str(exc))
+            return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.info(
+            "upstream.response",
+            status=response.status_code,
+            elapsed_ms=elapsed_ms,
+        )
 
         if response.status_code >= 400:
             return JSONResponse(status_code=response.status_code, content={"error": response.text})
@@ -79,19 +102,19 @@ async def _proxy(payload: Dict[str, Any], stream: bool, transform: str, request:
 
 
 async def _proxy_passthrough(payload: Dict[str, Any], stream: bool, request: Request) -> Any:
-    upstream_url = settings.upstream_base_url.rstrip("/") + settings.upstream_responses_path
+    upstream_url = settings.upstream_responses_url()
     headers = _build_upstream_headers(request)
 
     timeout = httpx.Timeout(settings.request_timeout)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    if stream:
+        client = httpx.AsyncClient(timeout=timeout)
         start = time.time()
         try:
-            if stream:
-                response = await client.post(upstream_url, json=payload, headers=headers, stream=True)
-            else:
-                response = await client.post(upstream_url, json=payload, headers=headers)
+            req = client.build_request("POST", upstream_url, json=payload, headers=headers)
+            response = await client.send(req, stream=True)
         except httpx.RequestError as exc:
+            await client.aclose()
             logger.error("upstream.request_error", error=str(exc))
             return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
 
@@ -102,12 +125,36 @@ async def _proxy_passthrough(payload: Dict[str, Any], stream: bool, request: Req
             elapsed_ms=elapsed_ms,
         )
 
-        if stream:
-            if response.status_code >= 400:
-                data = await response.aread()
-                return JSONResponse(status_code=response.status_code, content={"error": data.decode("utf-8", "ignore")})
+        if response.status_code >= 400:
+            data = await response.aread()
+            await response.aclose()
+            await client.aclose()
+            return JSONResponse(status_code=response.status_code, content={"error": data.decode("utf-8", "ignore")})
 
-            return StreamingResponse(response.aiter_bytes(), media_type="text/event-stream")
+        async def stream_bytes() -> Any:
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        return StreamingResponse(stream_bytes(), media_type="text/event-stream")
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        start = time.time()
+        try:
+            response = await client.post(upstream_url, json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            logger.error("upstream.request_error", error=str(exc))
+            return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.info(
+            "upstream.response",
+            status=response.status_code,
+            elapsed_ms=elapsed_ms,
+        )
 
         if response.status_code >= 400:
             return JSONResponse(status_code=response.status_code, content={"error": response.text})
@@ -135,3 +182,30 @@ async def completions(request: Request) -> Any:
 async def responses(request: Request) -> Any:
     payload = await request.json()
     return await _proxy_passthrough(payload, bool(payload.get("stream")), request)
+
+
+@app.get("/v1/models")
+async def models(request: Request) -> Any:
+    upstream_url = settings.upstream_models_url()
+    headers = _build_upstream_headers(request)
+    timeout = httpx.Timeout(settings.request_timeout)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        start = time.time()
+        try:
+            response = await client.get(upstream_url, headers=headers, params=request.query_params)
+        except httpx.RequestError as exc:
+            logger.error("upstream.request_error", error=str(exc))
+            return JSONResponse(status_code=502, content={"error": "upstream_unreachable"})
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.info(
+            "upstream.response",
+            status=response.status_code,
+            elapsed_ms=elapsed_ms,
+        )
+
+        if response.status_code >= 400:
+            return JSONResponse(status_code=response.status_code, content={"error": response.text})
+
+        return JSONResponse(content=response.json())

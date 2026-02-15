@@ -35,5 +35,22 @@ class Settings(BaseSettings):
             return {"Authorization": f"Bearer {self.upstream_api_key}"}
         return {self.upstream_api_key_header: self.upstream_api_key}
 
+    def upstream_url_for(self, path: str) -> str:
+        base = self.upstream_base_url.rstrip("/")
+        cleaned = path.strip()
+        if not cleaned:
+            return base
+        if not cleaned.startswith("/"):
+            cleaned = "/" + cleaned
+        if base.endswith("/v1") and cleaned.startswith("/v1/"):
+            cleaned = cleaned[len("/v1"):]
+        return base + cleaned
+
+    def upstream_responses_url(self) -> str:
+        return self.upstream_url_for(self.upstream_responses_path)
+
+    def upstream_models_url(self) -> str:
+        return self.upstream_url_for("/v1/models")
+
 
 settings = Settings()

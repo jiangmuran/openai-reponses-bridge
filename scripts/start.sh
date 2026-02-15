@@ -48,14 +48,41 @@ if [ -z "${UPSTREAM_URL}" ]; then
 fi
 
 UPSTREAM_URL="${UPSTREAM_URL%/}"
+UPSTREAM_HAS_V1=0
+if [[ "${UPSTREAM_URL}" == */v1 ]]; then
+  UPSTREAM_HAS_V1=1
+fi
 
-check_endpoint() {
+auth_header=()
+if [ -n "${API_KEY}" ]; then
+  auth_header=(-H "Authorization: Bearer ${API_KEY}")
+fi
+
+check_endpoint_get() {
   local url="$1"
   local code
-  code=$(curl -sS -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${API_KEY}" "$url" || true)
+  code=$(curl -sS -o /dev/null -w "%{http_code}" "${auth_header[@]}" "$url" || true)
 
   case "$code" in
-    200|201|204|301|302|303|307|308|401|403|405)
+    200|201|204|301|302|303|307|308|401|403|405|429)
+      echo "OK: $url ($code)"
+      return 0
+      ;;
+    *)
+      echo "FAIL: $url ($code)" >&2
+      return 1
+      ;;
+  esac
+}
+
+check_endpoint_post() {
+  local url="$1"
+  local code
+  code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" \
+    "${auth_header[@]}" -d '{}' "$url" || true)
+
+  case "$code" in
+    200|201|204|301|302|303|307|308|400|401|403|405|415|422|429)
       echo "OK: $url ($code)"
       return 0
       ;;
@@ -67,9 +94,11 @@ check_endpoint() {
 }
 
 echo "Validating upstream..."
-check_endpoint "${UPSTREAM_URL}" || exit 1
-check_endpoint "${UPSTREAM_URL}/responses" || exit 1
-check_endpoint "${UPSTREAM_URL}/v1/responses" || exit 1
+check_endpoint_get "${UPSTREAM_URL}" || exit 1
+check_endpoint_post "${UPSTREAM_URL}/responses" || exit 1
+if [ "${UPSTREAM_HAS_V1}" -eq 0 ]; then
+  check_endpoint_post "${UPSTREAM_URL}/v1/responses" || exit 1
+fi
 
 export UPSTREAM_BASE_URL="${UPSTREAM_URL}"
 if [ -n "${API_KEY}" ]; then

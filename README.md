@@ -84,6 +84,7 @@ curl http://localhost:8000/healthz
 - `POST /v1/chat/completions`：旧版 Chat Completions 适配
 - `POST /v1/completions`：旧版 Completions 适配
 - `POST /v1/responses`：新接口透传
+- `GET /v1/models`：模型列表透传
 - `GET /healthz`：健康检查
 
 ## 兼容性 | Compatibility
